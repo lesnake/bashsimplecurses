@@ -15,6 +15,9 @@
 #support for delay loop function (instead of sleep,
 #enabling keyboard input) by Markus Mikkolainen
 
+# Tput Macros, with term_ prefix
+eval "$(infocmp | sed -E '/=/!d; s/,/\n/g; s/[ \t]*//g' | sed -E '1d; s/(.*=)(.*)/term_\1\"\2\"/g ')"
+
 
 bsc_create_buffer(){
     # Try to use SHM, then $TMPDIR, then /tmp
@@ -95,14 +98,17 @@ bsc_term_init(){
     # tput civis
 }
 
-
 #change line
 bsc__nl(){
     BSC_WNDHGT=$((BSC_WNDHGT+1))
-    tput cud1
-    tput cub "$(tput cols)"
-    [ $BSC_WLFT -gt 0 ] && tput cuf $BSC_WLFT
-    tput sc
+    # tput cud1
+    # tput cub "$(tput cols)"
+    # [ $BSC_WLFT -gt 0 ] && tput cuf $BSC_WLFT
+    # tput sc
+    local left
+    [ $BSC_WLFT -gt 0 ] && left=${term_cuf/\%p1%d/${BSC_WLFT}}
+    # Same as above, full bash with 1 subshell, faster
+    echo -ne "${term_cud1}${cub/\%p1%d/${cols}}${left}${term_sc}"
 }
 
 
@@ -177,46 +183,49 @@ function window() {
     local title
     local color
     local bgcolor
+    local tmp_height
     title=$1
     color=$2
-    bgcolor=$4
+    bgcolor=$3
 
     [ $VERBOSE -eq 2 ] && echo "Begin of window $title" >&2
 
     # Manage new window position
     case "$BSC_NEWWIN_TOP_REQ$BSC_NEWWIN_RGT_REQ" in
         "00" )
-        # Window is requested to be displayed under the previous one
-        ;;
+            # Window is requested to be displayed under the previous one
+            ;;
         "01" )
-        # Window is requested to be displayed to the right of the last one
+            # Window is requested to be displayed to the right of the last one
 
-        BSC_WLFT=$(( BSC_WLFT + BSC_COLWIDTH ))
-        [ $BSC_WLFT -gt 0 ] && tput cuf $(( BSC_WLFT + BSC_COLWIDTH ))
-    backtotoprow $BSC_WNDHGT
-        BSC_COLHGT=$(( BSC_COLHGT - BSC_WNDHGT))
-        ;;
+            BSC_WLFT=$(( BSC_WLFT + BSC_COLWIDTH ))
+            [ $BSC_WLFT -gt 0 ] && tput cuf $(( BSC_WLFT + BSC_COLWIDTH ))
+            backtotoprow $BSC_WNDHGT
+            BSC_COLHGT=$(( BSC_COLHGT - BSC_WNDHGT))
+            ;;
         "10" )
-        # Window is requested to be displayed overwriting the ones above (??!??)
-        # Instead, we reset the layout, enabling more possibilities
-        tput cud $(( BSC_COLHGT_MAX - BSC_COLBOT ))
-        reset_layout
+            # Window is requested to be displayed overwriting the ones above (??!??)
+            # Instead, we reset the layout, enabling more possibilities
+            tmp_height=$(( BSC_COLHGT_MAX - BSC_COLBOT ))
+            [ "$tmp_height" -gt 0 ] && tput cud "$tmp_height"
+            reset_layout
         ;;
         "11" )
-        # Window is requested to be displayed in a new column starting from top
-    backtotoprow $BSC_COLHGT
-        
-        BSC_COLLFT=$(( BSC_COLLFT + BSC_COLWIDTH_MAX ))
-        BSC_WLFT=$BSC_COLLFT
+            # Window is requested to be displayed in a new column starting from top
+            backtotoprow $BSC_COLHGT
 
-        BSC_COLHGT=0
-        BSC_COLBOT=0
-        BSC_COLWIDTH_MAX=0
+            BSC_COLLFT=$(( BSC_COLLFT + BSC_COLWIDTH_MAX ))
+            BSC_WLFT=$BSC_COLLFT
+
+            BSC_COLHGT=0
+            BSC_COLBOT=0
+            BSC_COLWIDTH_MAX=0
         ;;
         * )
-        echo "Unexpected window position requirement"
-        clean_env
-        exit 1
+            echo "Unexpected window position requirement"
+            clean_env
+            exit 1
+        ;;
     esac
 
     # Reset window position mechanism for next window
@@ -225,16 +234,17 @@ function window() {
     BSC_WNDHGT=0
 
     bsc_cols=$(tput cols)
-    case $3  in
+    case $4  in
         "" )
-            # No witdh given
+            # No witdh given use remaining width
+            bsc_cols=$(( bsc_cols - BSC_COLLFT ))
         ;;
         *% )
-            w=$(echo $3 | sed 's/%//')
+            w=${4/\%/}
             bsc_cols=$((w*bsc_cols/100))
         ;;
         * )
-            bsc_cols=$3
+            bsc_cols=$4
         ;;
     esac
     
@@ -263,12 +273,21 @@ function window() {
     bsc_left=$(( (bsc_cols - len)/2 -1 ))
 
     # Init top left window corner
-    tput cub "$(tput cols)"
-    [ $BSC_WLFT -gt 0 ] && tput cuf $BSC_WLFT
-    tput sc
-
+    local corner
+    local left
+    # tput cub "$(tput cols)"
+    # [ $BSC_WLFT -gt 0 ] && tput cuf $BSC_WLFT
+    # tput sc
+    # Same as above, full bash with 1 subshell, faster
+    [ $BSC_WLFT -gt 0 ] && left=${term_cuf/\%p1%d/${BSC_WLFT}}
+    corner="${cub/\%p1%d/${cols}}${left}${term_sc}"
+    
     #draw upper line
-    echo -ne "$_TL$BSC_LINEBODY$_TR"
+    # echo -ne "$_TL$BSC_LINEBODY$_TR"
+    local upperline
+    # Same as above, full bash with 1 subshell, faster
+    upperline="$_TL$BSC_LINEBODY$_TR"
+    echo -ne "${corner}${upperline}"
 
     #next line, draw title
     bsc__nl
@@ -281,6 +300,8 @@ function window() {
 reset_colors(){
     echo -ne "\033[00m"
 }
+export COLOR_RST=$(reset_colors)
+
 setcolor(){
     local color
     color=$1
@@ -314,6 +335,17 @@ setcolor(){
             ;;
     esac
 }
+export COLOR_GREY=$(setcolor "grey")
+export COLOR_GRAY=$(setcolor "gray")
+export COLOR_RED=$(setcolor "red")
+export COLOR_GREEN=$(setcolor "green")
+export COLOR_YELLOW=$(setcolor "yellow")
+export COLOR_BLUE=$(setcolor "blue")
+export COLOR_MAGENTA=$(setcolor "magenta")
+export COLOR_CYAN=$(setcolor "cyan")
+export COLOR_WHITE=$(setcolor "white")
+export COLOR_DEFAULT=$(setcolor "default")
+
 setbgcolor(){
     local bgcolor
     bgcolor=$1
@@ -349,8 +381,18 @@ setbgcolor(){
             echo -ne "\033[01;49m"
             ;;
     esac
-
 }
+
+export BGCOLOR_GREY=$(setbgcolor "grey")
+export BGCOLOR_GRAY=$(setbgcolor "gray")
+export BGCOLOR_RED=$(setbgcolor "red")
+export BGCOLOR_GREEN=$(setbgcolor "green")
+export BGCOLOR_YELLOW=$(setbgcolor "yellow")
+export BGCOLOR_BLUE=$(setbgcolor "blue")
+export BGCOLOR_MAGENTA=$(setbgcolor "magenta")
+export BGCOLOR_CYAN=$(setbgcolor "cyan")
+export BGCOLOR_WHITE=$(setbgcolor "white")
+export BGCOLOR_DEFAULT=$(setbgcolor "default")
 
 #append a separator, new line
 addsep (){
@@ -362,12 +404,14 @@ addsep (){
 #clean the current line
 clean_line(){
     #set default color
-    reset_colors
+    # reset_colors
 
-    tput sc
-    echo -ne "$BSC_BLANKLINE"
-    #tput el
-    tput rc
+    # tput sc
+    # echo -ne "$BSC_BLANKLINE"
+    # #tput el
+    # tput rc
+    # Same as above, full bash, faster.
+    echo -ne "${COLOR_RST}${term_sc}${BSC_BLANKLINE}${term_rc}"
 }
 
 #add text on current window
@@ -560,22 +604,20 @@ bsc__multiappend(){
 #
 bsc__append(){
     clean_line
-    tput sc
-    echo -ne $_VLINE
+    
     local len
-    len=$(wc -c < <(echo -n "$1"))
+    len=${#1}
     bsc_left=$(( (BSC_COLWIDTH - len)/2 - 1 ))
-
     [[ "$2" == "left" ]] && bsc_left=0
+    
+    local offset
+    [ $bsc_left -gt 0 ] && offset="${term_cuf/\%p1%d/${bsc_left}}"
+    
+    local reset_colors
+    [ "$3" != "" ] || [ "$4" != "" ] && reset_colors="$COLOR_RST"
 
-    [ $bsc_left -gt 0 ] && tput cuf $bsc_left
-    setcolor $3
-    setbgcolor $4
-    echo -ne "$1"
-    reset_colors
-    tput rc
-    tput cuf $((BSC_COLWIDTH-1))
-    echo -ne $_VLINE
+    echo -ne "${term_sc}${_VLINE}${3}${4}${offset}${1}${reset_colors}${term_rc}${term_cuf/\%p1%d/$((BSC_COLWIDTH-1))}${_VLINE}"
+
     bsc__nl
 }
 
@@ -583,37 +625,38 @@ bsc__append(){
 append_tabbed(){
     [[ $2 == "" ]] && echo "append_tabbed: Second argument needed" >&2 && exit 1
     [[ "$3" != "" ]] && delim=$3 || delim=":"
-    clean_line
-
-    echo -ne $_VLINE
     local len
-    len=$(wc -c < <(echo -n "$1"))
+    len=$(echo -ne "$1" | sed -E "s,\x1B\[[0-9;]*[a-zA-Z],,g" | wc -c)
     cell_wdt=$((BSC_COLWIDTH/$2))
-
-    setcolor $4
-    setbgcolor $5
-    tput sc
+    
+    local reset_colors
+    [ "$4" != "" ] || [ "$5" != "" ] && reset_colors="$COLOR_RST"
 
     local i
-    for i in `seq 0 $(($2))`; do
-        tput rc
+    local offset
+    local linebody
+    for i in $(seq 0 $(($2))); do
         cell_offset=$((cell_wdt*i))
-        [ $cell_offset -gt 0 ] && tput cuf $cell_offset
-        echo -n "`echo -n $1 | cut -f$((i+1)) -d"$delim" | cut -c 1-$((cell_wdt-3))`"
+        [ $cell_offset -gt 0 ] && offset="${term_cuf/\%p1%d/${cell_offset}}"
+        field=$(cut -f$((i+1)) -d"$delim" <<< "$1")
+        # get visible chars only, removing color attributes
+        printablefield=$(sed -E "s,\x1B\[[0-9;]*[a-zA-Z],,g" <<< "$field")
+        # Only keep visible part of chars that can fit in the cell"
+        # Only works well with a color/text/color structure.
+        cellbash=${field/${printablefield}/${printablefield:0:$((cell_wdt-3))}}
+        linebody="${linebody}${term_rc}${offset}$cellbash"
     done
-
-    tput rc
-    reset_colors
-    tput cuf $((BSC_COLWIDTH-2))
-    echo -ne $_VLINE
+    
+    clean_line
+    echo -ne "${_VLINE}${4}${5}${term_sc}${linebody}${reset_colors}${term_rc}${term_cuf/\%p1%d/$((BSC_COLWIDTH-2))}${_VLINE}"
     bsc__nl
 }
 
 #append a command output
 append_command(){
     while read -r line; do
-        bsc__append "$line" left $2 $3
-    done < <( $1 2>&1 | fold -w $((BSC_COLWIDTH-2)) -s)
+        bsc__append "$line" left "$2" "$3"
+    done < <( eval "$1" 2>&1 | fold -w $((BSC_COLWIDTH-2)) -s)
     }
 
 #close the window display
@@ -727,15 +770,16 @@ main_loop (){
         sigint_check
 
         # Display the buffer
+        echo -e "$(date +%H:%M:%S.%N),Begin,Display" >> profile.csv
         cat $BSC_BUFFER
-    
+        echo -e "$(date +%H:%M:%S.%N),End,Display" >> profile.csv
         [ $VERBOSE -gt 0 ] && [ -f "$BSC_STDERR" ] && cat $BSC_STDERR && rm $BSC_STDERR
 
         $update_fn "$time"
         retval=$?
         if [ $retval -eq 255 ]; then
                 clean_env
-                exit "$retval"
+                return "$retval"
         fi
 
         sigint_check
